@@ -8,14 +8,18 @@ import (
 	"strconv"
 	"gopkg.in/olivere/elastic.v3"
 	"reflect"
-	"context"
-	"cloud.google.com/go/bigtable"
 	"github.com/pborman/uuid"
 	"strings"
+	//big table
+	"context"
+	"cloud.google.com/go/bigtable"
 	//Oauth
 	"github.com/auth0/go-jwt-middleware"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
+	//image
+	"cloud.google.com/go/storage"
+	"io"
 )
 
 const (
@@ -27,6 +31,7 @@ const (
 	PROJECT_ID = "aurora-198420"
 	BT_INSTANCE = "aurora-post"
 	ES_URL = "http://104.198.25.122:9200"
+	BUCKET_NAME = "post-image-aurora-198420"
 )
 
 type Location struct {
@@ -39,6 +44,7 @@ type Post struct {
 	User     string `json:"user"`
 	Message  string  `json:"message"`
 	Location Location `json:"location"`
+	Url    string `json:"url"`
 }
 
 var mySigningKey = []byte("secret")
@@ -141,7 +147,7 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	var ps []Post
 	for _, item := range searchResult.Each(reflect.TypeOf(typ)) { // instance of
 		p := item.(Post) // p = (Post) item
-		fmt.Printf("Post by %s: %s at lat %v and lon %v\n", p.User, p.Message, p.Location.Lat, p.Location.Lon)
+		fmt.Printf("Post by %s: %s at lat %v and lon %v \nurl: %s\n", p.User, p.Message, p.Location.Lat, p.Location.Lon, p.Url)
 		//ps = append(ps, p) //without using filter
 		if !containsFilteredWords(&p.Message) {
 			ps = append(ps, p)
@@ -165,18 +171,87 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 	claims := user.(*jwt.Token).Claims
 	username := claims.(jwt.MapClaims)["username"]
 
-	fmt.Println("Received one post request")
-	decoder := json.NewDecoder(r.Body)
-	var p Post
-	if err := decoder.Decode(&p); err != nil {
-		panic(err)
+	//allow image
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+
+	// 32 << 20 is the maxMemory param for ParseMultipartForm, equals to 32MB (1MB = 1024 * 1024 bytes = 2^20 bytes)
+	// After you call ParseMultipartForm, the file will be saved in the server memory with maxMemory size.
+	// If the file size is larger than maxMemory, the rest of the data will be saved in a system temporary file.
+	r.ParseMultipartForm(32 << 20)
+
+	// Parse from form data.
+	fmt.Printf("Received one post request %s\n", r.FormValue("message"))
+	lat, _ := strconv.ParseFloat(r.FormValue("lat"), 64)
+	lon, _ := strconv.ParseFloat(r.FormValue("lon"), 64)
+	p := &Post{
+		User:    username.(string),
+		Message: r.FormValue("message"),
+		Location: Location{
+			Lat: lat,
+			Lon: lon,
+		},
+	}
+
+	//extract image
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		http.Error(w, "Image is not available", http.StatusInternalServerError)
+		fmt.Printf("Image is not available %v.\n", err)
 		return
 	}
-	p.User = username.(string)
+	defer file.Close()
+
+	ctx := context.Background()
 	id := uuid.New()
+
+	_, attrs, err := saveToGCS(ctx, file, BUCKET_NAME, id)
+	if err != nil {
+		http.Error(w, "GCS is not setup", http.StatusInternalServerError)
+		fmt.Printf("GCS is not setup %v\n", err)
+		return
+	}
+
+	// Update the media link after saving to GCS.
+	p.Url = attrs.MediaLink
+
 	// Save to ES.
-	saveToES(&p, id)
-	saveToCBT(&p, id)
+	saveToES(p, id)
+	saveToCBT(p, id, ctx)
+}
+
+// Save an image to GCS.
+func saveToGCS(ctx context.Context, r io.Reader, bucket, name string) (*storage.ObjectHandle, *storage.ObjectAttrs, error) {
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer client.Close()
+
+	bh := client.Bucket(bucket)
+	// Next check if the bucket exists
+	if _, err = bh.Attrs(ctx); err != nil {
+		return nil, nil, err
+	}
+
+	obj := bh.Object(name)
+	w := obj.NewWriter(ctx)
+	if _, err := io.Copy(w, r); err != nil {
+		return nil, nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, nil, err
+	}
+
+
+	if err := obj.ACL().Set(ctx, storage.AllUsers, storage.RoleReader); err != nil {
+		return nil, nil, err
+	}
+
+	attrs, err := obj.Attrs(ctx)
+	fmt.Printf("Post is saved to GCS: %s\n", attrs.MediaLink)
+	return obj, attrs, err
 }
 
 // Save a post to ElasticSearch
@@ -202,9 +277,8 @@ func saveToES(p *Post, id string) {
 	fmt.Printf("Post is saved to Index: %s\n", p.Message)
 }
 
-func saveToCBT(p *Post, id string) {
+func saveToCBT(p *Post, id string, ctx context.Context) {
 	//save to BigTable
-	ctx := context.Background()
 	// you must update project name here
 	bt_client, err := bigtable.NewClient(ctx, PROJECT_ID, BT_INSTANCE)
 	if err != nil {

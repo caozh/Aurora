@@ -18,9 +18,10 @@
       <file leaf-file-name="main.go" pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/main.go">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="300">
-              <caret line="17" column="32" lean-forward="false" selection-start-line="17" selection-start-column="32" selection-end-line="17" selection-end-column="32" />
+            <state relative-caret-position="-2864">
+              <caret line="21" column="12" lean-forward="true" selection-start-line="21" selection-start-column="12" selection-end-line="21" selection-end-column="12" />
               <folding>
+                <element signature="n#!!block;n#saveToGCS#0" expanded="false" />
                 <element signature="n#!!block;n#saveToES#0" expanded="false" />
                 <element signature="n#!!block;n#saveToCBT#0" expanded="false" />
                 <element signature="n#!!block;n#containsFilteredWords#0" expanded="false" />
@@ -375,7 +376,7 @@
     <servers />
   </component>
   <component name="ToolWindowManager">
-    <frame x="-7" y="0" width="1294" height="1407" extended-state="1" />
+    <frame x="-7" y="0" width="1294" height="1407" extended-state="0" />
     <editor active="true" />
     <layout>
       <window_info id="Palette" active="false" anchor="right" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="3" side_tool="false" content_ui="tabs" />
@@ -416,7 +417,9 @@
     </ignored-roots>
   </component>
   <component name="XDebuggerManager">
-    <breakpoint-manager />
+    <breakpoint-manager>
+      <option name="time" value="1" />
+    </breakpoint-manager>
     <watches-manager />
   </component>
   <component name="editorHistoryManager">
@@ -425,6 +428,7 @@
         <state relative-caret-position="0">
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
+            <element signature="n#!!block;n#saveToGCS#0" expanded="false" />
             <element signature="n#!!block;n#saveToES#0" expanded="false" />
             <element signature="n#!!block;n#saveToCBT#0" expanded="false" />
             <element signature="n#!!block;n#containsFilteredWords#0" expanded="false" />
@@ -445,6 +449,7 @@
         <state relative-caret-position="0">
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
+            <element signature="n#!!block;n#saveToGCS#0" expanded="false" />
             <element signature="n#!!block;n#saveToES#0" expanded="false" />
             <element signature="n#!!block;n#saveToCBT#0" expanded="false" />
             <element signature="n#!!block;n#containsFilteredWords#0" expanded="false" />
@@ -472,9 +477,10 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/main.go">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="300">
-          <caret line="17" column="32" lean-forward="false" selection-start-line="17" selection-start-column="32" selection-end-line="17" selection-end-column="32" />
+        <state relative-caret-position="-2864">
+          <caret line="21" column="12" lean-forward="true" selection-start-line="21" selection-start-column="12" selection-end-line="21" selection-end-column="12" />
           <folding>
+            <element signature="n#!!block;n#saveToGCS#0" expanded="false" />
             <element signature="n#!!block;n#saveToES#0" expanded="false" />
             <element signature="n#!!block;n#saveToCBT#0" expanded="false" />
             <element signature="n#!!block;n#containsFilteredWords#0" expanded="false" />
