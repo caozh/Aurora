@@ -20,18 +20,24 @@ import (
 	//image
 	"cloud.google.com/go/storage"
 	"io"
+	//cache
+	"github.com/go-redis/redis"
+	"time"
 )
 
 const (
 	INDEX = "aurora"
 	TYPE = "post"
 	DISTANCE = "200km"
-
+	ENABLE_MEMCACHE = true
 	// Needs to update
 	PROJECT_ID = "aurora-198420"
 	BT_INSTANCE = "aurora-post"
 	ES_URL = "http://104.198.25.122:9200"
 	BUCKET_NAME = "post-image-aurora-198420"
+	//cache
+	REDIS_URL = "redis-14345.c10.us-east-1-3.ec2.cloud.redislabs.com:14345"
+	REDIS_PWD = "pX3FuLp4GhEWDDFG9yJBs4xzsIvilQMi"
 )
 
 type Location struct {
@@ -111,6 +117,26 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 		ran = val + "km"
 	}
 
+	//cache
+	key := r.URL.Query().Get("lat") + ":" + r.URL.Query().Get("lon") + ":" + ran
+	if ENABLE_MEMCACHE {
+		rs_client := redis.NewClient(&redis.Options{
+			Addr:     REDIS_URL,
+			Password: REDIS_PWD,
+			DB:       0,  // use default DB
+		})
+
+		val, err := rs_client.Get(key).Result()
+		if err != nil {
+			fmt.Printf("Redis cannot find the key %s as %v.\n", key, err)
+		} else {
+			fmt.Printf("Redis find the key %s.\n", key)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(val))
+			return
+		}
+	}
+
 	// Create a client
 	client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
 	if err != nil {
@@ -147,12 +173,12 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	var ps []Post
 	for _, item := range searchResult.Each(reflect.TypeOf(typ)) { // instance of
 		p := item.(Post) // p = (Post) item
-		fmt.Printf("Post by %s: %s at lat %v and lon %v \nurl: %s\n", p.User, p.Message, p.Location.Lat, p.Location.Lon, p.Url)
+		fmt.Printf("Post by %s: %s at lat %v and lon %v\n", p.User, p.Message, p.Location.Lat, p.Location.Lon)
 		//ps = append(ps, p) //without using filter
 		if !containsFilteredWords(&p.Message) {
 			ps = append(ps, p)
 		} else {
-			fmt.Printf("This post contains inappropriate words\n");
+			//fmt.Printf("This post contains inappropriate words\n");
 		}
 	}
 	js, err := json.Marshal(ps)
@@ -160,6 +186,23 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 		return
 	}
+
+	//cache
+	if ENABLE_MEMCACHE {
+		rs_client := redis.NewClient(&redis.Options{
+			Addr:     REDIS_URL,
+			Password: REDIS_PWD,
+			DB:       0,  // use default DB
+		})
+
+		// Set the cache expiration to be 30 seconds
+		err := rs_client.Set(key, string(js), time.Second*30).Err()
+		if err != nil {
+			fmt.Printf("Redis cannot save the key %s as %v.\n", key, err)
+		}
+
+	}
+
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
