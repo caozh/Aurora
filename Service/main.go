@@ -12,16 +12,20 @@ import (
 	"cloud.google.com/go/bigtable"
 	"github.com/pborman/uuid"
 	"strings"
+	//Oauth
+	"github.com/auth0/go-jwt-middleware"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/gorilla/mux"
 )
 
 const (
 	INDEX = "aurora"
 	TYPE = "post"
 	DISTANCE = "200km"
+
 	// Needs to update
 	PROJECT_ID = "aurora-198420"
 	BT_INSTANCE = "aurora-post"
-	// Needs to update this URL if you deploy it to cloud.
 	ES_URL = "http://104.198.25.122:9200"
 )
 
@@ -37,6 +41,8 @@ type Post struct {
 	Location Location `json:"location"`
 }
 
+var mySigningKey = []byte("secret")
+
 func main() {
 	// Create a client
 	client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
@@ -44,7 +50,6 @@ func main() {
 		panic(err)
 		return
 	}
-
 	// Use the IndexExists service to check if a specified index exists.
 	exists, err := client.IndexExists(INDEX).Do()
 	if err != nil {
@@ -72,88 +77,33 @@ func main() {
 	}
 
 	fmt.Println("started-service")
-	http.HandleFunc("/post", handlerPost)
-	http.HandleFunc("/search", handlerSearch)
+	r := mux.NewRouter()
+
+	var jwtMiddleware = jwtmiddleware.New(jwtmiddleware.Options{
+		ValidationKeyGetter: func(token *jwt.Token) (interface{}, error) {
+			return mySigningKey, nil
+		},
+		SigningMethod: jwt.SigningMethodHS256,
+	})
+
+	r.Handle("/post", jwtMiddleware.Handler(http.HandlerFunc(handlerPost))).Methods("POST")
+	r.Handle("/search", jwtMiddleware.Handler(http.HandlerFunc(handlerSearch))).Methods("GET")
+	r.Handle("/login", http.HandlerFunc(loginHandler)).Methods("POST")
+	r.Handle("/signup", http.HandlerFunc(signupHandler)).Methods("POST")
+
+	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":8080", nil))
-
-}
-
-func handlerPost(w http.ResponseWriter, r *http.Request) {
-	// Parse from body of request to get a json object.
-	fmt.Println("Received one post request")
-	decoder := json.NewDecoder(r.Body)
-	var p Post
-	if err := decoder.Decode(&p); err != nil {
-		panic(err)
-		return
-	}
-	id := uuid.New()
-	// Save to ES.
-	saveToES(&p, id)
-
-}
-
-// Save a post to ElasticSearch
-func saveToES(p *Post, id string) {
-	// Create a client
-	es_client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
-	if err != nil {
-		panic(err)
-		return
-	}
-
-	// Save it to index
-	_, err = es_client.Index().
-		Index(INDEX).
-		Type(TYPE).
-		Id(id).
-		BodyJson(p).
-		Refresh(true).
-		Do()
-	if err != nil {
-		panic(err)
-		return
-	}
-
-	fmt.Printf("Post is saved to Index: %s\n", p.Message)
-
-	ctx := context.Background()
-	// you must update project name here
-	bt_client, err := bigtable.NewClient(ctx, PROJECT_ID, BT_INSTANCE)
-	if err != nil {
-		panic(err)
-		return
-	}
-
-	tbl := bt_client.Open("post")
-	mut := bigtable.NewMutation()
-	t := bigtable.Now()
-
-	mut.Set("post", "user", t, []byte(p.User))
-	mut.Set("post", "message", t, []byte(p.Message))
-	mut.Set("location", "lat", t, []byte(strconv.FormatFloat(p.Location.Lat, 'f', -1, 64)))
-	mut.Set("location", "lon", t, []byte(strconv.FormatFloat(p.Location.Lon, 'f', -1, 64)))
-
-	err = tbl.Apply(ctx, id, mut)
-	if err != nil {
-		panic(err)
-		return
-	}
-	fmt.Printf("Post is saved to BigTable: %s\n", p.Message)
 }
 
 func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Received one request for search")
 	lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
 	lon, _ := strconv.ParseFloat(r.URL.Query().Get("lon"), 64)
-
 	// range is optional
 	ran := DISTANCE
 	if val := r.URL.Query().Get("range"); val != "" {
 		ran = val + "km"
 	}
-
-	//fmt.Printf( "Search received: %f %f %s\n", lat, lon, ran)
 
 	// Create a client
 	client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
@@ -185,21 +135,19 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Found a total of %d post\n", searchResult.TotalHits())
 
 	// Each is a convenience function that iterates over hits in a search result.
-	// It makes sure you don't need to check for nil values in the response.
+	// It makes sure don't need to check for nil values in the response.
 	// However, it ignores errors in serialization.
 	var typ Post
 	var ps []Post
 	for _, item := range searchResult.Each(reflect.TypeOf(typ)) { // instance of
 		p := item.(Post) // p = (Post) item
 		fmt.Printf("Post by %s: %s at lat %v and lon %v\n", p.User, p.Message, p.Location.Lat, p.Location.Lon)
-		// TODO(student homework): Perform filtering based on keywords such as web spam etc.
+		//ps = append(ps, p) //without using filter
 		if !containsFilteredWords(&p.Message) {
 			ps = append(ps, p)
 		} else {
 			fmt.Printf("This post contains inappropriate words\n");
 		}
-
-
 	}
 	js, err := json.Marshal(ps)
 	if err != nil {
@@ -210,6 +158,75 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write(js)
+}
+func handlerPost(w http.ResponseWriter, r *http.Request) {
+	//login check
+	user := r.Context().Value("user")
+	claims := user.(*jwt.Token).Claims
+	username := claims.(jwt.MapClaims)["username"]
+
+	fmt.Println("Received one post request")
+	decoder := json.NewDecoder(r.Body)
+	var p Post
+	if err := decoder.Decode(&p); err != nil {
+		panic(err)
+		return
+	}
+	p.User = username.(string)
+	id := uuid.New()
+	// Save to ES.
+	saveToES(&p, id)
+	saveToCBT(&p, id)
+}
+
+// Save a post to ElasticSearch
+func saveToES(p *Post, id string) {
+	// Create a client
+	es_client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
+	if err != nil {
+		panic(err)
+		return
+	}
+	// Save it to index
+	_, err = es_client.Index().
+		Index(INDEX).
+		Type(TYPE).
+		Id(id).
+		BodyJson(p).
+		Refresh(true).
+		Do()
+	if err != nil {
+		panic(err)
+		return
+	}
+	fmt.Printf("Post is saved to Index: %s\n", p.Message)
+}
+
+func saveToCBT(p *Post, id string) {
+	//save to BigTable
+	ctx := context.Background()
+	// you must update project name here
+	bt_client, err := bigtable.NewClient(ctx, PROJECT_ID, BT_INSTANCE)
+	if err != nil {
+		panic(err)
+		return
+	}
+
+	tbl := bt_client.Open("post")
+	mut := bigtable.NewMutation()
+	t := bigtable.Now()
+
+	mut.Set("post", "user", t, []byte(p.User))
+	mut.Set("post", "message", t, []byte(p.Message))
+	mut.Set("location", "lat", t, []byte(strconv.FormatFloat(p.Location.Lat, 'f', -1, 64)))
+	mut.Set("location", "lon", t, []byte(strconv.FormatFloat(p.Location.Lon, 'f', -1, 64)))
+
+	err = tbl.Apply(ctx, id, mut)
+	if err != nil {
+		panic(err)
+		return
+	}
+	fmt.Printf("Post is saved to BigTable: %s\n", p.Message)
 }
 
 func containsFilteredWords(s *string) bool {
